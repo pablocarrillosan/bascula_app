@@ -58,22 +58,15 @@ export function calculateBodyComposition(weight: number, impedance: number, p: P
   else if (male && muscle >= 93.5) muscle = 120
   muscle = clamp(muscle, 10, 120)
 
-  // Grasa visceral
+  // Grasa visceral (fórmula corregida de bodymiscale; la de openScale salía unos 4 puntos alta)
   let vfal: number
-  if (!male) {
-    if (weight > (13 - height * 0.5) * -1) {
-      const subsub = height * 1.45 + height * 0.1158 * height - 120
-      vfal = (weight * 500) / subsub - 6 + age * 0.07
-    } else {
-      const sub = 0.691 + height * -0.0024 + height * -0.0024
-      vfal = (height * 0.027 - sub * weight) * -1 + age * 0.07 - age
-    }
-  } else if (height < weight * 1.6) {
-    const sub = (height * 0.4 - height * (height * 0.0826)) * -1
-    vfal = (weight * 305) / (sub + 48) - 2.9 + age * 0.15
+  if (male) {
+    if (height < weight * 1.6 + 63) vfal = age * 0.15 + (weight * 305) / (height * 0.0826 * height - height * 0.4 + 48) - 2.9
+    else vfal = age * 0.15 + (weight * (height * -0.0015 + 0.765) - height * 0.143) - 5
+  } else if (weight <= height * 0.5 - 13) {
+    vfal = age * 0.07 + (weight * (height * -0.0024 + 0.691) - height * 0.027) - 10.5
   } else {
-    const sub = 0.765 + height * -0.0015
-    vfal = (height * 0.143 - weight * sub) * -1 + age * 0.15 - 5.0
+    vfal = age * 0.07 + (weight * 500) / (height * 1.45 + height * 0.1158 * height - 120) - 6
   }
   vfal = clamp(vfal, 1, 50)
 
