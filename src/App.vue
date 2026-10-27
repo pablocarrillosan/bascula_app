@@ -21,6 +21,8 @@ const status = ref('Pulsa «Medir» y súbete descalzo a la báscula.')
 const liveWeight = ref<number | null>(null)
 const measurement = ref<Measurement | null>(null)
 const composition = ref<BodyComposition | null>(null)
+/** Último paquete de la báscula en hexadecimal, para diagnosticar si no llega la impedancia. */
+const lastPacket = ref('')
 let timeoutId: number | undefined
 
 const profileValid = computed(
@@ -64,6 +66,10 @@ function fmt(n: number, decimals: number) {
   return n.toLocaleString('es-ES', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
 }
 
+function hex(d: DataView) {
+  return Array.from({ length: d.byteLength }, (_, i) => d.getUint8(i).toString(16).padStart(2, '0')).join(' ')
+}
+
 function fmtDate(d: Date) {
   return d.toLocaleString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
@@ -98,6 +104,7 @@ async function startScan() {
     measurement.value = null
     composition.value = null
     liveWeight.value = null
+    lastPacket.value = ''
     await BleClient.requestLEScan({ allowDuplicates: true, scanMode: ScanMode.SCAN_MODE_LOW_LATENCY }, onScanResult)
     scanning.value = true
     status.value = 'Buscando la báscula. Súbete descalzo.'
@@ -126,13 +133,19 @@ async function stopScan() {
 function onScanResult(r: ScanResult) {
   if (!scanning.value || r.device.deviceId.toUpperCase() !== SCALE_MAC || !r.serviceData) return
   const key = Object.keys(r.serviceData).find((k) => k.toLowerCase().includes('181b'))
-  const m = key ? parseMiScale2(r.serviceData[key]) : null
-  if (!m || m.removed) return
+  const data = key ? r.serviceData[key] : undefined
+  const m = parseMiScale2(data)
+  if (!m) return
 
   if (m.timestampFromScale && Date.now() - m.timestamp.getTime() > MAX_MEASUREMENT_AGE_MS) {
     status.value = `La báscula aún muestra la medición del ${fmtDate(m.timestamp)}. Súbete para medir de nuevo.`
     return
   }
+  // Al bajarte, la báscula sigue anunciando el resultado final (a menudo es ahí donde llega la impedancia).
+  // Solo se acepta si en esta medición ya te habías subido, para no coger la medición anterior.
+  const started = liveWeight.value !== null || measurement.value !== null
+  if (m.removed && !(started && m.stabilized && m.hasImpedance && m.weightKg > 0)) return
+  if (data) lastPacket.value = hex(data)
   if (!m.stabilized) {
     liveWeight.value = m.weightKg
     status.value = 'Estabilizando…'
@@ -146,7 +159,7 @@ function onScanResult(r: ScanResult) {
     stopScan()
   } else {
     composition.value = null
-    status.value = 'Peso estable. Sigue descalzo unos segundos para medir la composición.'
+    status.value = 'Peso estable. Sigue descalzo hasta que la báscula termine de medir la composición.'
   }
 }
 
@@ -180,6 +193,7 @@ onBeforeUnmount(stopScan)
         <span class="unit">kg</span>
       </p>
       <p class="status">{{ status }}</p>
+      <p v-if="measurement && !composition && lastPacket" class="packet">Último paquete: {{ lastPacket }}</p>
     </section>
 
     <dl v-if="metrics.length" class="metrics">
