@@ -10,8 +10,6 @@ import { buildWeightFit } from './lib/fit'
 /** Dirección Bluetooth de tu báscula. */
 const SCALE_MAC = '5C:CA:D3:5F:BA:DA'
 const SCAN_TIMEOUT_MS = 120_000
-/** Mediciones más antiguas se consideran la anterior, que la báscula sigue anunciando un rato. */
-const MAX_MEASUREMENT_AGE_MS = 15 * 60_000
 
 const profile = reactive<Profile>(loadProfile())
 watch(profile, (p) => localStorage.setItem('perfil', JSON.stringify(p)))
@@ -137,14 +135,15 @@ function onScanResult(r: ScanResult) {
   const m = parseMiScale2(data)
   if (!m) return
 
-  if (m.timestampFromScale && Date.now() - m.timestamp.getTime() > MAX_MEASUREMENT_AGE_MS) {
-    status.value = `La báscula aún muestra la medición del ${fmtDate(m.timestamp)}. Súbete para medir de nuevo.`
+  // No se usa el reloj de la báscula: suele estar desfasado (zona horaria, cambio de hora).
+  // Mientras estás encima los paquetes no llevan la marca de «peso retirado»; los que la llevan son
+  // el resultado final, que solo se acepta si en esta medición ya te habías subido (si no, es el anterior).
+  const started = liveWeight.value !== null || measurement.value !== null
+  if (m.removed && !started) {
+    status.value = 'Súbete descalzo a la báscula.'
     return
   }
-  // Al bajarte, la báscula sigue anunciando el resultado final (a menudo es ahí donde llega la impedancia).
-  // Solo se acepta si en esta medición ya te habías subido, para no coger la medición anterior.
-  const started = liveWeight.value !== null || measurement.value !== null
-  if (m.removed && !(started && m.stabilized && m.hasImpedance && m.weightKg > 0)) return
+  if (m.removed && !(m.stabilized && m.hasImpedance && m.weightKg > 0)) return
   if (data) lastPacket.value = hex(data)
   if (!m.stabilized) {
     liveWeight.value = m.weightKg
@@ -152,10 +151,10 @@ function onScanResult(r: ScanResult) {
     return
   }
 
-  measurement.value = m
+  measurement.value = { ...m, timestamp: measurement.value?.timestamp ?? new Date() }
   if (m.hasImpedance) {
     composition.value = calculateBodyComposition(m.weightKg, m.impedance, { ...profile })
-    status.value = `Medición completa · ${fmtDate(m.timestamp)}`
+    status.value = `Medición completa · ${fmtDate(measurement.value.timestamp)}`
     stopScan()
   } else {
     composition.value = null
